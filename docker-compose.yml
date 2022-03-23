@@ -1,0 +1,133 @@
+version: '3.8'
+# Composeファイルのバージョンを指定しています。
+# ここのバージョンはdockerのバージョンに依存します。
+# 3.8の場合、必要なdockerのバージョンはv 19.03.0以上です。ターミナルから確認しておきましょう。
+
+services:
+# この下で各コンテナの設定を行います。
+# ちなみにdb 、api、frontはサービス名と言います。
+  db:
+  # Railsに必要なDBコンテナを立ち上げています。
+  # このコンテナは開発環境でしか利用しません。
+    image: postgres:12.3-alpine
+    # dbサービスはDockerfileを持っていませんので、ここでベースイメージを指定しています。
+    environment:
+    # 環境変数をキー: 値で指定しています。
+    # ここで指定した環境変数はコンテナ内に直接渡すことができます。
+      TZ: UTC
+      # OSのタイムゾーンを指定しています。
+      # 本番環境に合わせ世界標準時間を設定します。
+      PGTZ: UTC
+      # PostgreSQLのタイムゾーンを指定しています。
+      # PGTZ環境変数は、接続時にサーバにSET TIME ZONEコマンドを送信するために、libpqクライアントが使用します。
+
+      # PostgreSQLは、タイムゾーンが、コマンドオプション、もしくは「postgresql.conf」で指定されていない場合、OSのTZ環境変数を参照し、タイムゾーンを設定します。
+      # AlipneLinuxのPostgreSQLの場合、「postgresql.conf」内でtimezone = 'UTC'と設定されているため、PGTZ環境変数を設定しないとタイムゾーンを変更することができません。
+      # なお、デフォルトの値はUTCで変わりはないですが、第三者から見ても明示的になるよう、UTCを設定しています。
+
+      # postgresql.confの確認方法
+      # コンテナに入る
+      # $ docker-compose run --rm db sh
+      # postgresql.confのファイパスの検索
+      # $ find . -name postgresql.conf
+      # => ./var/lib/postgresql/data/postgresql.conf
+      # ファイル内容の確認
+      # $ cat /var/lib/postgresql/data/postgresql.conf
+      POSTGRES_PASSWORD: $POSTGRES_PASSWORD
+      # POSTGRES_PASSWORDというキーはRails内でも使用するため、environmentに指定してコンテナに渡しています。
+      # $POSTGRES_PASSWORDは.envファイルの値を展開しています。
+      # ここは「password」という値に展開されます。
+    volumes:
+    # volumes: <ローカルのパス : コンテナのパス>
+    # ここでデータベースの値を永続化しています。
+    # そもそもローカルマシン（PCを指す）とDockerコンテナは別空間にあります。
+    # ですので、DBコンテナにデータを保存しても、コンテナを削除してしまえば保存したデータは全て消えてしまいます。
+    # そこでデータベースの値やファイルなどのデータを永続化する仕組みがこのvolumes(ボリューム)となります。
+    # ボリュームで指定したデータはコンテナを削除しても消されることはなく、次コンテナが立ち上がったときに既存のデータをコピーします。
+    # この仕組みのおかげでコンテナを削除しても続きから作業が行えるのですね。
+      - ./api/tmp/db:/var/lib/postgresql/data
+
+  api:
+    build:
+    # build: <Dockerfileパス>
+    # サービスのベースイメージにDockerfileを指定する場合には、このbuildを使用します。
+    # ここには参照するDockerfileのパスを指定します。
+    # 本来build: ./apiという形で構いませんが、下で記述するargsオプションを使用するのでcontextでファイルパスを指定しています。
+    # . ... ファイルパスを指定するピリオドは、docker-compose.ymlのあるディレクトリを表します。
+    # Dockerfileが同列にある場合は.のみの指定となります。
+      context: ./api # ここが rails new . のカレントディレクトリとなる
+      args:
+      # args: <変数キー: 変数の値>
+      # ここにはDockerfileに渡す値を指定します。（正確にはDockerイメージをビルドする際に渡す引数）
+      # ここで指定した値をDockerfileで受け取るにはARG命令を使用します。
+      # 今回は下記の流れで環境変数を受け渡ししています。
+
+      # 1. .env
+      # WORKDIR=app
+      # 2. docker-compose.yml
+      #   args:
+      #     WORKDIR: $WORKDIR
+      # 3. Dockerfile
+      # ARG WORKDIR
+      # RUN echo ${WORKDIR}
+      # => app
+        WORKDIR: $WORKDIR
+    command: /bin/sh -c "rm -f tmp/pids/server.pid && bundle exec rails s -p 3000 -b '0.0.0.0'"
+    # /bin/sh ... シェルの実行。
+    # -c ... 引数の文字列をコマンドとして実行するコマンドオプション。
+    # rm -f tmp/pids/server.pid ... server.pidファイルの削除。
+    # undle exec rails s -p 3000 -b '0.0.0.0' ... Railsサーバの起動。
+    environment:
+      POSTGRES_PASSWORD: $POSTGRES_PASSWORD
+    volumes:
+      - ./api:/$WORKDIR
+    depends_on:
+    # depends_on: - <依存先のサービス名>
+    # サービスの依存関係を定義します。
+    # ここで指定したサービスは、対象のサービスを起動すると自動で起動します。
+    # 例えば下記のケースだと、apiサービスを起動するとdbサービスも連動して起動します。
+    # また、「apiサービスより先にdbサービスを起動してくれ」といった起動の順番も指定されます。
+    # 今回のComposeファイルの起動順序 ... 1. db => 2. api => 3. front
+      - db
+    ports:
+    # ports: - "ホストマシンのポート番号:コンテナのポート番号"
+    # 公開ポート番号を指定します。
+    # 下記の場合は「コンテナの3000ポートを、ブラウザ上で8080で参照する」という指定になります。
+    # ports:
+    # - "8080:3000"
+    # 注意点
+    # YAMLファイルはaa:bbを時刻として解釈するので、必ずダブルクォーテーションで囲むようにしてください。
+    # と本にありましたが、実際囲まなくても正常に動きました。ただ囲んでおく方が間違い無いでしょう
+      - "$API_PORT:$CONTAINER_PORT"
+
+  front:
+    build:
+      context: ./front
+      args:
+        WORKDIR: $WORKDIR
+        CONTAINER_PORT: $CONTAINER_PORT
+    command: yarn run dev
+    # command: <コンテナで実行するコマンド>
+    # コンテナに対して実行したいコマンドを記述します。
+    # DockerfileのCMD命令と同じ扱いです。
+    # なぜfrontサービスだけ指定しているのか?
+    # Nuxt.jsの場合は、開発環境と本番環境で起動コマンドが変わるためです。
+    # 開発 ... $ yarn run dev
+    # package.jsonのnuxtスクリプトが実行される
+    # 本番 ... $yarn run start
+    # package.jsonのnuxt startスクリプトが実行される
+    # 本番環境の起動コマンドは、のちに出てくるheroku.ymlのrunで指定します。
+    volumes:
+      - ./front:/$WORKDIR
+    ports:
+      - "$FRONT_PORT:$CONTAINER_PORT"
+    depends_on:
+      - api
+
+# -fオプション ... ファイルが存在する場合に上書きします。ここでは Gemfile を対象としています。
+# -Bオプション ... Gemをインストールするbundle installコマンドを実行しません。
+# 後でイメージを作り替えるときに実行されるため、ここでは省略しています。
+# -d <データベース名>オプション ... 使用するデータベースを指定します。
+# 今回は、postgresqlを指定していますが、指定がない場合はデフォルトのsqlite3が使用されます。
+# ちなみに–database=postgresqlこういった書き方もできます。
+# --apiオプション ... API専用のRailsアプリケーションを作成する場合に指定するオプションです。
