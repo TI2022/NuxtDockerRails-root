@@ -79,6 +79,7 @@ services:
     # undle exec rails s -p 3000 -b '0.0.0.0' ... Railsサーバの起動。
     environment:
       POSTGRES_PASSWORD: $POSTGRES_PASSWORD
+      API_DOMAIN: "localhost:$FRONT_PORT"  
     volumes:
       - ./api:/$WORKDIR
     depends_on:
@@ -106,7 +107,12 @@ services:
       args:
         WORKDIR: $WORKDIR
         CONTAINER_PORT: $CONTAINER_PORT
+        API_URL: "http://localhost:$API_PORT" #frontサービスで指定したargsはDockerfileに渡されます。
+        # この設定によりNuxt.jsのアプリ内で「API_URL」が参照できるようになります。
+
     command: yarn run dev
+    # command: yarn run start ←本番用
+
     # command: <コンテナで実行するコマンド>
     # コンテナに対して実行したいコマンドを記述します。
     # DockerfileのCMD命令と同じ扱いです。
@@ -116,7 +122,6 @@ services:
     # package.jsonのnuxtスクリプトが実行される
     # 本番 ... $yarn run start
     # package.jsonのnuxt startスクリプトが実行される
-    # 本番環境の起動コマンドは、のちに出てくるheroku.ymlのrunで指定します。
     volumes:
       - ./front:/$WORKDIR
     ports:
